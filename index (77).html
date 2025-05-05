@@ -1,0 +1,282 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Загрузка и управление файлами</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .upload-form {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        .upload-form input[type="file"] {
+            display: none;
+        }
+        .upload-form label {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            display: inline-block;
+        }
+        .upload-form label:hover {
+            background-color: #218838;
+        }
+        .file-list {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-item span {
+            font-size: 14px;
+            color: #555;
+            margin-right: 20px;
+        }
+        .file-item .actions {
+            display: flex;
+            gap: 15px;
+        }
+        .file-item a {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .file-item a:hover {
+            background-color: #0056b3;
+        }
+        .file-item button {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .file-item button:hover {
+            background-color: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <h1>Загрузка и управление файлами</h1>
+
+    <!-- Форма загрузки файла -->
+    <div class="upload-form">
+        <label for="fileToUpload">Выбрать файл</label>
+        <input type="file" name="fileToUpload" id="fileToUpload">
+    </div>
+
+    <!-- Список файлов -->
+    <div class="file-list">
+        <h2>Список файлов</h2>
+        <div id="fileList"></div>
+    </div>
+
+    <script>
+        // GitHub configuration (replace with your details)
+        const GITHUB_TOKEN = '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'; // Replace with your GitHub PAT
+        const REPO_OWNER = 'sev-school-2'; // Replace with your GitHub username
+        const REPO_NAME = 'lect'; // Replace with your repository name
+        const UPLOAD_PATH = 'uploads/'; // Folder in the repository for uploads
+
+        // Функция для получения уникального имени файла
+        async function getUniqueFileName(originalName) {
+            const response = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${UPLOAD_PATH}`, {
+                headers: {
+                    'Authorization': `token ${GITHUB_TOKEN}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            });
+            const files = await response.json();
+            let counter = 1;
+            let fileName = originalName;
+            const fileInfo = {
+                name: originalName.split('.').slice(0, -1).join('.'),
+                ext: originalName.split('.').pop()
+            };
+
+            // Проверяем, существует ли имя файла
+            while (files.some(f => f.name === fileName)) {
+                fileName = `${fileInfo.name} копия ${counter}.${fileInfo.ext}`;
+                counter++;
+            }
+            return fileName;
+        }
+
+        // Функция для обновления списка файлов
+        async function updateFileList() {
+            try {
+                const response = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${UPLOAD_PATH}`, {
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+                if (!response.ok) throw new Error('Не удалось получить список файлов');
+                const files = await response.json();
+                const fileList = document.getElementById('fileList');
+                fileList.innerHTML = ''; // Очищаем текущий список
+                files.forEach(file => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item';
+                    fileItem.innerHTML = `
+                        <span>${file.name}</span>
+                        <div class="actions">
+                            <a href="${file.download_url}" download>Скачать</a>
+                            <button onclick="deleteFile('${file.name}', '${file.sha}')">Удалить</button>
+                        </div>
+                    `;
+                    fileList.appendChild(fileItem);
+                });
+            } catch (error) {
+                console.error('Ошибка при обновлении списка файлов:', error);
+            }
+        }
+
+        // Функция для удаления файла
+        async function deleteFile(filename, sha) {
+            try {
+                const response = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${UPLOAD_PATH}${filename}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: `Delete ${filename}`,
+                        sha: sha
+                    })
+                });
+                if (!response.ok) throw new Error('Не удалось удалить файл');
+                updateFileList();
+            } catch (error) {
+                console.error('Ошибка при удалении:', error);
+                alert('Произошла ошибка при удалении файла: ' + error.message);
+            }
+        }
+
+        // Обработка выбора файла и автоматическая загрузка
+        document.getElementById('fileToUpload').addEventListener('change', async function() {
+            const fileInput = this;
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Ошибка: Файл не был загружен.');
+                return;
+            }
+
+            // Проверка размера файла (1 ГБ = 1073741824 байт)
+            if (file.size > 1073741824) {
+                alert('Ошибка: Файл слишком большой (более 1 ГБ).');
+                fileInput.value = '';
+                return;
+            }
+
+            try {
+                // Получаем уникальное имя файла
+                const uniqueName = await getUniqueFileName(file.name);
+
+                // Читаем содержимое файла как base64
+                const reader = new FileReader();
+                reader.onload = async function() {
+                    const content = reader.result.split(',')[1]; // Получаем base64 без префикса
+                    const response = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${UPLOAD_PATH}${uniqueName}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `token ${GITHUB_TOKEN}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            message: `Upload ${uniqueName}`,
+                            content: content
+                        })
+                    });
+                    if (!response.ok) throw new Error('Не удалось загрузить файл');
+                    updateFileList();
+                    fileInput.value = ''; // Очищаем input
+                };
+                reader.onerror = function() {
+                    alert('Ошибка: Не удалось прочитать файл.');
+                };
+                reader.readAsDataURL(file);
+            } catch (error) {
+                console.error('Ошибка:', error);
+                alert('Произошла ошибка при загрузке файла: ' + error.message);
+            }
+        });
+
+        // Первоначальное обновление списка при загрузке страницы
+        updateFileList();
+    </script>
+</body>
+</html>
